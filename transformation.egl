@@ -1,0 +1,610 @@
+[% 
+// Try to load the root element safely
+var modelRoot = uconPlus!UconPlus.all.first;
+var debugMessages = new Sequence;
+debugMessages.add("// Debug: Attempting to load UconPlus model");
+if (modelRoot == null) {
+    debugMessages.add("// Debug: Failed to load UconPlus model. Possible issue: Content is not allowed in prolog. Please check the XMI file for invalid characters or structure.");
+    return debugMessages.join("\n") + "\nnamespace GenericNamespace {\n    policyset UnnamedPolicySet {\n        apply firstApplicable\n        // Debug: No valid model elements found\n    }\n}";
+}
+debugMessages.add("// Debug: Model root loaded successfully");
+
+// Extract namespace (use PolicySet name as namespace, or fallback to GenericNamespace)
+var ps = null;
+var namespaceName = "GenericNamespace";
+var psName = "UnnamedPolicySet";
+var psApply = "firstApplicable";
+if (hasFeature(modelRoot, "policyset") and modelRoot.policyset != null) {
+    if (modelRoot.policyset.isKindOf(Sequence) or modelRoot.policyset.isKindOf(OrderedSet)) {
+        if (not modelRoot.policyset.isEmpty()) {
+            ps = modelRoot.policyset.first;
+            debugMessages.add("// Debug: Policyset found");
+        } else {
+            debugMessages.add("// Debug: Policyset is empty");
+        }
+    } else {
+        ps = modelRoot.policyset;
+        debugMessages.add("// Debug: Policyset is a single object");
+    }
+} else {
+    debugMessages.add("// Debug: No policyset found in the model");
+}
+if (ps != null) {
+    namespaceName = (hasFeature(ps, "name") and ps.name != null) ? ps.name : "GenericNamespace";
+    psName = (hasFeature(ps, "name") and ps.name != null) ? ps.name : "UnnamedPolicySet";
+    psApply = getApply(ps, "firstApplicable");
+}
+
+// Extract policy
+var policy = null;
+var policyName = "UnnamedPolicy";
+var policyApply = "firstApplicable";
+if (ps != null and hasFeature(ps, "policy") and ps.policy != null) {
+    if (ps.policy.isKindOf(Sequence) or ps.policy.isKindOf(OrderedSet)) {
+        if (not ps.policy.isEmpty()) {
+            policy = ps.policy.first;
+            debugMessages.add("// Debug: Policy found");
+        } else {
+            debugMessages.add("// Debug: Policy is empty");
+        }
+    } else {
+        policy = ps.policy;
+        debugMessages.add("// Debug: Policy is a single object");
+    }
+} else {
+    debugMessages.add("// Debug: No policy found in the policyset");
+}
+if (policy != null) {
+    policyName = (hasFeature(policy, "name") and policy.name != null) ? policy.name : "UnnamedPolicy";
+    policyApply = getApply(policy, "firstApplicable");
+}
+
+// Extract network attributes
+var netAttributes = new Sequence;
+if (hasFeature(modelRoot, "network") and modelRoot.network != null) {
+    var net = null;
+    if (modelRoot.network.isKindOf(Sequence) or modelRoot.network.isKindOf(OrderedSet)) {
+        if (not modelRoot.network.isEmpty()) {
+            net = modelRoot.network.first;
+            debugMessages.add("// Debug: Network found");
+        }
+    } else {
+        net = modelRoot.network;
+        debugMessages.add("// Debug: Network is a single object");
+    }
+    if (net != null) {
+        if (hasFeature(net, "networkId") and net.networkId != null) {
+            netAttributes.add("DefaultAttributes.network.networkId == \"" + net.networkId + "\"");
+        }
+        if (hasFeature(net, "protocol") and net.protocol != null) {
+            netAttributes.add("DefaultAttributes.network.networkProtocol == \"" + net.protocol + "\"");
+        }
+        if (hasFeature(net, "securityLevel") and net.securityLevel != null) {
+            netAttributes.add("DefaultAttributes.network.networkSecurityLevel == \"" + net.securityLevel + "\"");
+        }
+        if (hasFeature(net, "status") and net.status != null) {
+            netAttributes.add("DefaultAttributes.network.networkStatus == \"" + net.status + "\"");
+        }
+    }
+} else {
+    debugMessages.add("// Debug: No network found");
+}
+
+// Extract device
+var deviceName = "UnknownDevice";
+if (policy != null and hasFeature(policy, "device") and policy.device != null) {
+    var device = null;
+    if (policy.device.isKindOf(Sequence) or policy.device.isKindOf(OrderedSet)) {
+        if (not policy.device.isEmpty()) {
+            device = policy.device.first;
+            debugMessages.add("// Debug: Device found");
+        }
+    } else {
+        device = policy.device;
+        debugMessages.add("// Debug: Device is a single object");
+    }
+    if (device != null and hasFeature(device, "name") and device.name != null) {
+        deviceName = device.name;
+    }
+} else {
+    debugMessages.add("// Debug: No device found");
+}
+
+// Extract resource attributes
+var resAttributes = new Sequence;
+var targetClauses = new Sequence;
+if (policy != null and hasFeature(policy, "targetclause") and policy.targetclause != null) {
+    if (policy.targetclause.isKindOf(Sequence) or policy.targetclause.isKindOf(OrderedSet)) {
+        if (not policy.targetclause.isEmpty()) {
+            targetClauses.addAll(policy.targetclause);
+            debugMessages.add("// Debug: Target clauses found");
+        } else {
+            debugMessages.add("// Debug: Target clauses are empty");
+        }
+    } else {
+        targetClauses.add(policy.targetclause);
+        debugMessages.add("// Debug: Target clause is a single object");
+    }
+} else {
+    debugMessages.add("// Debug: No target clause found in policy");
+}
+for (tc in targetClauses) {
+    if (hasFeature(tc, "expression") and tc.expression != null) {
+        var expressions = new Sequence;
+        if (tc.expression.isKindOf(Sequence) or tc.expression.isKindOf(OrderedSet)) {
+            if (not tc.expression.isEmpty()) {
+                expressions.addAll(tc.expression);
+                debugMessages.add("// Debug: Expressions found in target clause");
+            }
+        } else {
+            expressions.add(tc.expression);
+            debugMessages.add("// Debug: Expression is a single object in target clause");
+        }
+        for (expr in expressions) {
+            if (hasFeature(expr, "name") and expr.name != null and hasFeature(expr, "value") and expr.value != null) {
+                var prefix = getAttributePrefix(expr);
+                var value = formatValue(expr.value, expr.type);
+                resAttributes.add(prefix + expr.name + " == " + value);
+            }
+            if (hasFeature(expr, "opr") and expr.opr != null) {
+                var oprs = new Sequence;
+                if (expr.opr.isKindOf(Sequence) or expr.opr.isKindOf(OrderedSet)) {
+                    if (not expr.opr.isEmpty()) {
+                        oprs.addAll(expr.opr);
+                        debugMessages.add("// Debug: Operators found in expression");
+                    }
+                } else {
+                    oprs.add(expr.opr);
+                    debugMessages.add("// Debug: Operator is a single object in expression");
+                }
+                for (opr in oprs) {
+                    if (hasFeature(opr, "name") and opr.name != null and hasFeature(opr, "value") and opr.value != null) {
+                        var oprPrefix = getAttributePrefix(opr);
+                        var oprValue = formatValue(opr.value, opr.type);
+                        resAttributes.add(oprPrefix + opr.name + " == " + oprValue);
+                    }
+                }
+            }
+        }
+    }
+}
+%]
+[% for (msg in debugMessages) { %]
+[%= msg %]
+[% } %]
+namespace <%= namespaceName %> {
+    policyset [%= psName %] {
+        apply [%= psApply %]
+        policy [%= policyName %] {
+            target clause 
+[% for (line in resAttributes) { %]
+                [%= line %]
+[% if (line != resAttributes.last and resAttributes.size() > 1) { %]
+                and 
+[% } %]
+[% } %]
+[% if (resAttributes.size() == 0) { %]
+                // Debug: No specific target expressions for policy
+[% } %]
+[% for (line in netAttributes) { %]
+                and [%= line %]
+[% } %]
+
+            apply [%= policyApply %]
+
+[% 
+var rules = new Sequence;
+if (policy != null and hasFeature(policy, "rule") and policy.rule != null) {
+    if (policy.rule.isKindOf(Sequence) or policy.rule.isKindOf(OrderedSet)) {
+        if (not policy.rule.isEmpty()) {
+            rules.addAll(policy.rule);
+            debugMessages.add("// Debug: Rules found in policy");
+        } else {
+            debugMessages.add("// Debug: Rules are empty");
+        }
+    } else {
+        rules.add(policy.rule);
+        debugMessages.add("// Debug: Rule is a single object");
+    }
+} else {
+    debugMessages.add("// Debug: No rules found in policy");
+}
+for (rule in rules) { 
+    var ruleName = (hasFeature(rule, "name") and rule.name != null) ? rule.name : "UnnamedRule";
+    var ruleType = (rule.eClass != null and rule.eClass.name == "Deny") ? "deny" : "permit";
+%]
+            rule [%= ruleName %] {
+                target clause 
+[% 
+var targetLines = new Sequence;
+var logicalOps = new Sequence;
+var targetClauses = new Sequence;
+if (hasFeature(rule, "targetclause") and rule.targetclause != null) {
+    if (rule.targetclause.isKindOf(Sequence) or rule.targetclause.isKindOf(OrderedSet)) {
+        if (not rule.targetclause.isEmpty()) {
+            targetClauses.addAll(rule.targetclause);
+            debugMessages.add("// Debug: Target clauses found in rule");
+        } else {
+            debugMessages.add("// Debug: Target clauses are empty in rule");
+        }
+    } else {
+        targetClauses.add(rule.targetclause);
+        debugMessages.add("// Debug: Target clause is a single object in rule");
+    }
+} else {
+    debugMessages.add("// Debug: No target clause found in rule");
+}
+for (tc in targetClauses) {
+    if (hasFeature(tc, "expression") and tc.expression != null) {
+        var expressions = new Sequence;
+        if (tc.expression.isKindOf(Sequence) or tc.expression.isKindOf(OrderedSet)) {
+            if (not tc.expression.isEmpty()) {
+                expressions.addAll(tc.expression);
+                debugMessages.add("// Debug: Expressions found in rule target clause");
+            }
+        } else {
+            expressions.add(tc.expression);
+            debugMessages.add("// Debug: Expression is a single object in rule target clause");
+        }
+        for (expr in expressions) {
+            if (hasFeature(expr, "name") and expr.name != null and hasFeature(expr, "value") and expr.value != null) {
+                var prefix = getAttributePrefix(expr);
+                var value = formatValue(expr.value, expr.type);
+                targetLines.add(prefix + expr.name + " == " + value);
+            }
+            if (hasFeature(expr, "opr") and expr.opr != null) {
+                var oprs = new Sequence;
+                if (expr.opr.isKindOf(Sequence) or expr.opr.isKindOf(OrderedSet)) {
+                    if (not expr.opr.isEmpty()) {
+                        oprs.addAll(expr.opr);
+                        debugMessages.add("// Debug: Operators found in rule expression");
+                    }
+                } else {
+                    oprs.add(expr.opr);
+                    debugMessages.add("// Debug: Operator is a single object in rule expression");
+                }
+                for (opr in oprs) {
+                    if (hasFeature(opr, "name") and opr.name != null and hasFeature(opr, "value") and opr.value != null) {
+                        var oprPrefix = getAttributePrefix(opr);
+                        var oprValue = formatValue(opr.value, opr.type);
+                        targetLines.add(oprPrefix + opr.name + " == " + oprValue);
+                        if (hasFeature(opr, "expOp") and opr.expOp != null) {
+                            logicalOps.add(opr.expOp == "or" ? "or" : "and");
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+var contextName = null;
+var eventType = null;
+if (hasFeature(rule, "context") and rule.context != null) {
+    var context = null;
+    if (rule.context.isKindOf(Sequence) or rule.context.isKindOf(OrderedSet)) {
+        if (not rule.context.isEmpty()) {
+            context = rule.context.first;
+            debugMessages.add("// Debug: Context found in rule");
+        }
+    } else {
+        context = rule.context;
+        debugMessages.add("// Debug: Context is a single object in rule");
+    }
+    if (context != null) {
+        if (hasFeature(context, "contextName") and context.contextName != null) {
+            contextName = context.contextName;
+        }
+        if (hasFeature(context, "event") and context.event != null) {
+            var event = null;
+            if (context.event.isKindOf(Sequence) or context.event.isKindOf(OrderedSet)) {
+                if (not context.event.isEmpty()) {
+                    event = context.event.first;
+                    debugMessages.add("// Debug: Event found in context");
+                }
+            } else {
+                event = context.event;
+                debugMessages.add("// Debug: Event is a single object in context");
+            }
+            if (event != null and hasFeature(event, "type") and event.type != null) {
+                eventType = event.type;
+            }
+        }
+    }
+}
+if (contextName != null) {
+    targetLines.add("DefaultAttributes.context.contextName == \"" + contextName + "\"");
+}
+if (eventType != null) {
+    targetLines.add("DefaultAttributes.event.eventType == \"" + eventType + "\"");
+}
+targetLines.add("DefaultAttributes.device.deviceName == \"" + deviceName.toLowerCase() + "\"");
+%]
+[% for (i in Sequence {1..targetLines.size()}) { %]
+                [%= targetLines.get(i-1) %]
+[% if (i <= logicalOps.size()) { %]
+                [%= logicalOps.get(i-1) %] 
+[% } else if (i < targetLines.size()) { %]
+                and 
+[% } %]
+[% } %]
+[% if (targetLines.size() == 0) { %]
+                // Debug: No specific target expressions for rule
+[% } %]
+
+                condition 
+[% 
+var condLines = new Sequence;
+var condLogicalOps = new Sequence;
+var condClauses = new Sequence;
+if (hasFeature(rule, "condition") and rule.condition != null) {
+    if (rule.condition.isKindOf(Sequence) or rule.condition.isKindOf(OrderedSet)) {
+        if (not rule.condition.isEmpty()) {
+            condClauses.addAll(rule.condition);
+            debugMessages.add("// Debug: Conditions found in rule");
+        } else {
+            debugMessages.add("// Debug: Conditions are empty in rule");
+        }
+    } else {
+        condClauses.add(rule.condition);
+        debugMessages.add("// Debug: Condition is a single object in rule");
+    }
+} else {
+    debugMessages.add("// Debug: No condition found in rule");
+}
+for (cond in condClauses) {
+    if (hasFeature(cond, "expression") and cond.expression != null) {
+        var expressions = new Sequence;
+        if (cond.expression.isKindOf(Sequence) or cond.expression.isKindOf(OrderedSet)) {
+            if (not cond.expression.isEmpty()) {
+                expressions.addAll(cond.expression);
+                debugMessages.add("// Debug: Expressions found in condition");
+            }
+        } else {
+            expressions.add(cond.expression);
+            debugMessages.add("// Debug: Expression is a single object in condition");
+        }
+        for (expr in expressions) {
+            if (hasFeature(expr, "name") and expr.name != null and hasFeature(expr, "value") and expr.value != null) {
+                var prefix = getAttributePrefix(expr);
+                var operator = getOperator(hasFeature(expr, "conOp") and expr.conOp != null ? expr.conOp : "equal");
+                var value = formatValue(expr.value, expr.type);
+                condLines.add(prefix + expr.name + " " + operator + " " + value);
+            }
+            if (hasFeature(expr, "opr") and expr.opr != null) {
+                var oprs = new Sequence;
+                if (expr.opr.isKindOf(Sequence) or expr.opr.isKindOf(OrderedSet)) {
+                    if (not expr.opr.isEmpty()) {
+                        oprs.addAll(expr.opr);
+                        debugMessages.add("// Debug: Operators found in condition expression");
+                    }
+                } else {
+                    oprs.add(expr.opr);
+                    debugMessages.add("// Debug: Operator is a single object in condition expression");
+                }
+                for (opr in oprs) {
+                    if (hasFeature(opr, "name") and opr.name != null and hasFeature(opr, "value") and opr.value != null) {
+                        var oprPrefix = getAttributePrefix(opr);
+                        var oprOperator = getOperator(hasFeature(opr, "conOp") and opr.conOp != null ? opr.conOp : "equal");
+                        var oprValue = formatValue(opr.value, opr.type);
+                        condLines.add(oprPrefix + opr.name + " " + oprOperator + " " + oprValue);
+                        if (hasFeature(opr, "expOp") and opr.expOp != null) {
+                            condLogicalOps.add(opr.expOp == "or" ? "||" : "&&");
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+%]
+[% for (i in Sequence {1..condLines.size()}) { %]
+                [%= condLines.get(i-1) %]
+[% if (i <= condLogicalOps.size()) { %]
+                [%= condLogicalOps.get(i-1) %] 
+[% } else if (i < condLines.size()) { %]
+                && 
+[% } %]
+[% } %]
+[% if (condLines.size() == 0) { %]
+                // Debug: No conditions specified
+[% } %]
+
+                [%= ruleType %]
+                on [%= ruleType %] {
+[% 
+var obligations = new Sequence;
+if (hasFeature(rule, "obligation") and rule.obligation != null) {
+    if (rule.obligation.isKindOf(Sequence) or rule.obligation.isKindOf(OrderedSet)) {
+        if (not rule.obligation.isEmpty()) {
+            obligations.addAll(rule.obligation);
+            debugMessages.add("// Debug: Obligations found in rule");
+        }
+    } else {
+        obligations.add(rule.obligation);
+        debugMessages.add("// Debug: Obligation is a single object in rule");
+    }
+} else {
+    debugMessages.add("// Debug: No obligations found in rule");
+}
+for (obl in obligations) { 
+    var oblName = (hasFeature(obl, "name") and obl.name != null) ? obl.name : "UnnamedObligation";
+    var oblCommand = (hasFeature(obl, "command") and obl.command != null) ? obl.command : "unknown";
+%]
+                    obligation <%= namespaceName %>.[%= oblName %] {
+                        Obligations.command = "[%= oblCommand %]"
+[% 
+var assignments = new Sequence;
+if (hasFeature(obl, "assignment") and obl.assignment != null) {
+    if (obl.assignment.isKindOf(Sequence) or obl.assignment.isKindOf(OrderedSet)) {
+        if (not obl.assignment.isEmpty()) {
+            assignments.addAll(obl.assignment);
+            debugMessages.add("// Debug: Assignments found in obligation");
+        }
+    } else {
+        assignments.add(obl.assignment);
+        debugMessages.add("// Debug: Assignment is a single object in obligation");
+    }
+}
+for (asg in assignments) { 
+    if (hasFeature(asg, "attribute") and asg.attribute != null and hasFeature(asg, "value") and asg.value != null) {
+        var asgPrefix = (hasFeature(asg, "category") and asg.category != null and asg.category == "resourceCat") ? namespaceName + "Attributes." : "DefaultAttributes.";
+%]
+                        [%= asgPrefix %][%= asg.attribute %] = "[%= asg.value %]"
+[% } } %]
+[% 
+var actuators = new Sequence;
+if (hasFeature(obl, "actuator") and obl.actuator != null) {
+    if (obl.actuator.isKindOf(Sequence) or obl.actuator.isKindOf(OrderedSet)) {
+        if (not obl.actuator.isEmpty()) {
+            actuators.addAll(obl.actuator);
+            debugMessages.add("// Debug: Actuators found in obligation");
+        }
+    } else {
+        actuators.add(obl.actuator);
+        debugMessages.add("// Debug: Actuator is a single object in obligation");
+    }
+}
+for (act in actuators) { 
+    var actCommand = (hasFeature(act, "command") and act.command != null) ? act.command : "unknown";
+    var actId = (hasFeature(act, "actuatorId") and act.actuatorId != null) ? act.actuatorId : "unknown";
+    var actType = (hasFeature(act, "actuatorType") and act.actuatorType != null) ? act.actuatorType : "unknown";
+%]
+                        DefaultAttributes.actuator.actuatorCommand = "[%= actCommand %]"
+                        DefaultAttributes.actuator.actuatorId = "[%= actId %]"
+                        DefaultAttributes.actuator.actuatorType = "[%= actType %]"
+[% if (hasFeature(act, "actuatorName") and act.actuatorName != null and act.actuatorName != "") { %]
+                        DefaultAttributes.actuator.actuatorName = "[%= act.actuatorName %]"
+[% } %]
+[% } %]
+                    }
+[% } %]
+[% 
+var advices = new Sequence;
+if (hasFeature(rule, "advice") and rule.advice != null) {
+    if (rule.advice.isKindOf(Sequence) or rule.advice.isKindOf(OrderedSet)) {
+        if (not rule.advice.isEmpty()) {
+            advices.addAll(rule.advice);
+            debugMessages.add("// Debug: Advices found in rule");
+        }
+    } else {
+        advices.add(rule.advice);
+        debugMessages.add("// Debug: Advice is a single object in rule");
+    }
+} else {
+    debugMessages.add("// Debug: No advices found in rule");
+}
+for (adv in advices) { 
+    var advName = (hasFeature(adv, "name") and adv.name != null) ? adv.name : "UnnamedAdvice";
+    var advMessage = (hasFeature(adv, "message") and adv.message != null) ? adv.message : "No message provided";
+    var advReason = (hasFeature(adv, "reason") and adv.reason != null) ? adv.reason : null;
+%]
+                    advice advices.[%= advName %] {
+                        advices.message = "[%= advMessage %]"
+[% if (advReason != null) { %]
+                        advices.decisionReason = "[%= advReason %]"
+[% } %]
+                    }
+[% } %]
+                }
+            }
+[% } %]
+        }
+    }
+}
+
+[% 
+// ------------------- Helper functions -------------------
+
+operation getApply(o, def : String) : String {
+    if (o == null) {
+        return def;
+    }
+    if (hasFeature(o, "combining") and o.combining != null) {
+        var c = o.combining;
+        if (c.isKindOf(Sequence) or c.isKindOf(OrderedSet)) {
+            if (not c.isEmpty() and c.first != null and c.first.eClass != null) {
+                return typeToAlg(c.first.eClass.name, def);
+            }
+        } else if (c.eClass != null) {
+            return typeToAlg(c.eClass.name, def);
+        }
+    }
+    return def;
+}
+
+operation typeToAlg(type : String, def : String) : String {
+    if (type == null or type == "") return def;
+    var norm = type.replace(" ", "").replace("_","-").toLowerCase();
+    if (norm == "firstapplicable" or norm == "first-applicable" or norm == "FirstApplicable") return "firstApplicable";
+    if (norm == "denyoverrides" or norm == "deny-overrides" or norm == "DenyOverrides") return "denyOverrides";
+    if (norm == "permitoverrides" or norm == "permit-overrides" or norm == "PermitOverrides") return "permitOverrides";
+    if (norm == "onlyoneapplicable" or norm == "only-one-applicable" or norm == "OnlyOneApplicable") return "onlyOneApplicable";
+    return def;
+}
+
+operation getAttributePrefix(expr) : String {
+    if (expr == null) return "DefaultAttributes.";
+    if (hasFeature(expr, "id") and expr.id != null) {
+        if (expr.id.contains("sensor")) {
+            var domain = extractDomainFromId(expr.id);
+            return "sensor." + (domain != null ? domain + "." : "");
+        } else if (expr.id.contains("Attributes")) {
+            var domain = extractDomainFromId(expr.id);
+            return (domain != null ? domain + "Attributes." : namespaceName + "Attributes.");
+        }
+    }
+    if (hasFeature(expr, "category") and expr.category != null) {
+        switch (expr.category) {
+            case "subjectCat": return "Attributes.subject.";
+            case "enviromentCat": return "DefaultAttributes.environment.";
+            case "resourceCat": return namespaceName + "Attributes.";
+            case "actionCat": return "DefaultAttributes.action.";
+            default: return "DefaultAttributes.";
+        }
+    }
+    return "DefaultAttributes.";
+}
+
+operation extractDomainFromId(id : String) : String {
+    if (id == null) return null;
+    var parts = id.split(":");
+    for (part in parts) {
+        if (part.contains("Attributes")) {
+            var attrParts = part.split("Attributes");
+            if (attrParts.size() > 0 and attrParts.get(0) != "") {
+                return attrParts.get(0);
+            }
+        }
+    }
+    return null;
+}
+
+operation formatValue(value : String, type : String) : String {
+    if (value == null) return "\"unknown\"";
+    if (type == null) return "\"" + value + "\"";
+    switch (type) {
+        case "boolean": return value.toLowerCase();
+        case "string": return "\"" + value + "\"";
+        case "integer": return value;
+        default: return "\"" + value + "\"";
+    }
+}
+
+operation hasFeature(o, n : String) : Boolean {
+    if (o == null or o.eClass == null) return false;
+    return o.eClass().eAllStructuralFeatures.exists(f | f.name == n);
+}
+
+operation getOperator(op) : String {
+    if (op == null) return "==";
+    switch (op) {
+        case "equal": return "==";
+        case "lessThan": return "<";
+        case "greaterThan": return ">";
+        case "lessEqualThan": return "<=";
+        case "greaterEqualThan": return ">=";
+        case "notEqual": return "<>";
+        default: return "==";
+    }
+}
+%]
